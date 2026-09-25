@@ -1,0 +1,65 @@
+name,city,province,type,website
+Escuela Politecnica Nacional,Distrito Metropolitano de Quito,Pichincha,public,https://www.epn.edu.ec
+Escuela Superior Politecnica de Chimborazo,Riobamba,Chimborazo,public,https://www.espoch.edu.ec
+Escuela Superior Politecnica Agropecuaria de Manabi Manuel Felix Lopez,Bolivar,Manabi,public,https://www.espam.edu.ec
+Universidad Central del Ecuador,Distrito Metropolitano de Quito,Pichincha,public,https://www.uce.edu.ec
+Universidad de Guayaquil,Guayaquil,Guayas,public,https://www.ug.edu.ec
+Universidad de Cuenca,Cuenca,Azuay,public,https://www.ucuenca.edu.ec
+Universidad Nacional de Loja,Loja,Loja,public,https://www.unl.edu.ec
+Universidad Tecnica de Manabi,Portoviejo,Manabi,public,https://www.utm.edu.ec
+Universidad Tecnica de Ambato,Ambato,Tungurahua,public,https://www.uta.edu.ec
+Universidad Tecnica de Machala,Machala,El Oro,public,https://www.utmachala.edu.ec
+Universidad Tecnica Luis Vargas Torres de Esmeraldas,Esmeraldas,Esmeraldas,public,https://www.utelvt.edu.ec
+Universidad Tecnica de Babahoyo,Babahoyo,Los Rios,public,https://www.utb.edu.ec
+Universidad Tecnica Estatal de Quevedo,Quevedo,Los Rios,public,https://www.uteq.edu.ec
+Universidad Tecnica del Norte,Ibarra,Imbabura,public,https://www.utn.edu.ec
+Universidad Laica Eloy Alfaro de Manabi,Manta,Manabi,public,https://www.uleam.edu.ec
+Universidad Estatal de Bolivar,Guaranda,Bolivar,public,https://www.ueb.edu.ec
+Universidad Agraria del Ecuador,Guayaquil,Guayas,public,https://www.uagraria.edu.ec
+Universidad Nacional de Chimborazo,Riobamba,Chimborazo,public,https://www.unach.edu.ec
+Universidad Tecnica de Cotopaxi,Latacunga,Cotopaxi,public,https://www.utc.edu.ec
+Escuela Superior Politecnica del Litoral,Guayaquil,Guayas,public,https://www.espol.edu.ec
+Universidad Andina Simon Bolivar,Distrito Metropolitano de Quito,Pichincha,public,https://www.uasb.edu.ec
+Universidad Estatal Peninsula de Santa Elena,La Libertad,Santa Elena,public,https://www.upse.edu.ec
+Universidad Estatal de Milagro,Milagro,Guayas,public,https://www.unemi.edu.ec
+Universidad Estatal del Sur de Manabi,Jipijapa,Manabi,public,https://www.unesum.edu.ec
+Facultad Latinoamericana de Ciencias Sociales FLACSO,Distrito Metropolitano de Quito,Pichincha,public,https://www.flacso.edu.ec
+Instituto de Altos Estudios Nacionales IAEN,Distrito Metropolitano de Quito,Pichincha,public,https://www.iaen.edu.ec
+Universidad Estatal Amazonica,Pastaza,Pastaza,public,https://www.uea.edu.ec
+Universidad Intercultural de las Nacionalidades y Pueblos Indigenas Amawtay Wasi,Distrito Metropolitano de Quito,Pichincha,public,https://www.uaw.edu.ec
+Universidad Politecnica Estatal del Carchi,Tulcan,Carchi,public,https://www.upec.edu.ec
+Universidad de las Fuerzas Armadas ESPE,Ruminahui,Pichincha,public,https://www.espe.edu.ec
+Universidad Regional Amazonica Ikiam,Tena,Napo,public,https://www.ikiam.edu.ec
+Universidad de Investigacion de Tecnologia Experimental Yachay,San Miguel de Urcuqui,Imbabura,public,https://www.yachaytech.edu.ec
+Universidad de las Artes,Guayaquil,Guayas,public,https://www.uartes.edu.ec
+Universidad Nacional de Educacion,Azogues,Canar,public,https://www.unae.edu.ec
+Universidad de Seguridad Ciudadana y Ciencias Policiales,Distrito Metropolitano de Quito,Pichincha,public,https://www.usecipol.edu.ec
+Universidad Publica de Santo Domingo de los Tsachilas,Santo Domingo,Santo Domingo de los Tsachilas,public,https://www.upsd.edu.ec
+Pontificia Universidad Catolica del Ecuador,Distrito Metropolitano de Quito,Pichincha,private_cofinanced,https://www.puce.edu.ec
+Universidad Catolica de Santiago de Guayaquil,Guayaquil,Guayas,private_cofinanced,https://www.ucsg.edu.ec
+Universidad Catolica de Cuenca,Cuenca,Azuay,private_cofinanced,https://www.ucacue.edu.ec
+Universidad Laica Vicente Rocafuerte de Guayaquil,Guayaquil,Guayas,private_cofinanced,https://www.ulvr.edu.ec
+Universidad Tecnica Particular de Loja,Loja,Loja,private_cofinanced,https://www.utpl.edu.ec
+Universidad UTE,Distrito Metropolitano de Quito,Pichincha,private_cofinanced,https://www.ute.edu.ec
+Universidad del Azuay,Cuenca,Azuay,private_cofinanced,https://www.uazuay.edu.ec
+Universidad Politecnica Salesiana,Cuenca,Azuay,private_cofinanced,https://www.ups.edu.ec
+Universidad Particular Internacional SEK,Distrito Metropolitano de Quito,Pichincha,private_selffinanced,https://www.uisek.edu.ec
+Universidad de Especialidades Espiritu Santo,Samborondon,Guayas,private_selffinanced,https://www.uees.edu.ec
+Universidad San Francisco de Quito,Distrito Metropolitano de Quito,Pichincha,private_selffinanced,https://www.usfq.edu.ec
+Universidad de Las Americas,Distrito Metropolitano de Quito,Pichincha,private_selffinanced,https://www.udla.edu.ec
+Universidad Internacional del Ecuador,Distrito Metropolitano de Quito,Pichincha,private_selffinanced,https://www.uide.edu.ec
+Universidad Regional Autonoma de Los Andes,Ambato,Tungurahua,private_selffinanced,https://www.uniandes.edu.ec
+Universidad del Pacifico Escuela de Negocios,Guayaquil,Guayas,private_selffinanced,https://www.upacifico.edu.ec
+Universidad Tecnologica Indoamerica,Ambato,Tungurahua,private_selffinanced,https://www.uti.edu.ec
+Universidad Casa Grande,Guayaquil,Guayas,private_selffinanced,https://www.casagrande.edu.ec
+Universidad Tecnologica Empresarial de Guayaquil,Guayaquil,Guayas,private_selffinanced,https://www.uteg.edu.ec
+Universidad Tecnologica Israel,Distrito Metropolitano de Quito,Pichincha,private_selffinanced,https://www.uisrael.edu.ec
+Universidad de Especialidades Turisticas,Distrito Metropolitano de Quito,Pichincha,private_selffinanced,https://www.uet.edu.ec
+Universidad Metropolitana,Guayaquil,Guayas,private_selffinanced,https://www.umet.edu.ec
+Universidad de Otavalo,Otavalo,Imbabura,private_selffinanced,https://www.uotavalo.edu.ec
+Universidad San Gregorio de Portoviejo,Portoviejo,Manabi,private_selffinanced,https://www.sangregorio.edu.ec
+Universidad de Los Hemisferios,Distrito Metropolitano de Quito,Pichincha,private_selffinanced,https://www.uhemisferios.edu.ec
+Universidad Iberoamericana del Ecuador,Distrito Metropolitano de Quito,Pichincha,private_selffinanced,https://www.unibe.edu.ec
+Universidad Tecnologica ECOTEC,Samborondon,Guayas,private_selffinanced,https://www.ecotec.edu.ec
+Universidad del Rio,Guayaquil,Guayas,private_selffinanced,https://www.udr.edu.ec
+Universidad Bolivariana del Ecuador,Duran,Guayas,private_selffinanced,https://www.ube.edu.ec
