@@ -44,6 +44,10 @@ class CollectorAdmin(admin.ModelAdmin):
                     "link_selector",
                     "date_selector",
                     "description_selector",
+                    "include_patterns",
+                    "exclude_patterns",
+                    "allowed_extensions",
+                    "blocked_extensions",
                 )
             },
         ),

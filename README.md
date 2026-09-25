@@ -149,6 +149,12 @@ VS009 allows configuring a new university collector without writing Python. Crea
 
 CSS selectors are used by default. Selectors beginning with `/` or `.//` are treated as XPath. Relative links are resolved against the university `jobs_url`.
 
+### Extraction Quality
+
+VS010 adds shared extraction filtering for collectors. The framework ignores document files, spreadsheets, presentations, archives, images, viewer/download URLs, and links inside navigation, menu, header, or footer regions. `Collector.include_patterns` and `Collector.exclude_patterns` accept one regular expression per line. `allowed_extensions` and `blocked_extensions` accept comma- or whitespace-separated extensions; the built-in unsafe attachment and image blocklist always applies.
+
+Generic and ESPE collectors use the shared extraction utilities to keep only vacancy-like links, resolve and preserve source URLs, normalize whitespace, remove duplicates, and populate available dates and basic role metadata. A page containing only attachments or non-vacancy links produces zero jobs.
+
 ## Scheduler
 
 VS008 makes collector execution autonomous with Celery and Redis.

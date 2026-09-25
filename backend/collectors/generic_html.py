@@ -5,6 +5,7 @@ from urllib.request import Request, urlopen
 from lxml import html
 
 from .base import BaseCollector
+from .extraction import JobExtractor, LinkFilter
 from .retry import retry_with_backoff
 from .types import JobRecord
 
@@ -49,6 +50,12 @@ class GenericHTMLCollector(BaseCollector):
         records = []
         seen_urls = set()
         university = self.collector_config.university
+        link_filter = LinkFilter(
+            self.collector_config.include_patterns,
+            self.collector_config.exclude_patterns,
+            self.collector_config.allowed_extensions,
+            self.collector_config.blocked_extensions,
+        )
 
         for item in items:
             title = self._text(item, self.collector_config.title_selector)
@@ -58,12 +65,15 @@ class GenericHTMLCollector(BaseCollector):
                 continue
 
             source_url = urljoin(university.jobs_url, link)
+            if not link_filter.allow(title, source_url):
+                continue
             if source_url in seen_urls:
                 continue
             seen_urls.add(source_url)
 
             description = self._text(item, self.collector_config.description_selector)
             date_text = self._text(item, self.collector_config.date_selector)
+            department, discipline, employment_type = JobExtractor.infer_fields(title)
             records.append(
                 JobRecord(
                     source=self.collector_config.name,
@@ -72,9 +82,14 @@ class GenericHTMLCollector(BaseCollector):
                     institution_name=university.name,
                     source_url=source_url,
                     location=f"{university.city}, {university.province}",
+                    department=department,
+                    discipline=discipline,
+                    employment_type=employment_type,
+                    posted_date=JobExtractor.parse_date(date_text),
                     description=description,
                     raw_data={
                         "source_page": university.jobs_url,
+                        "href": link,
                         "date_text": date_text,
                     },
                 )
@@ -100,8 +115,8 @@ class GenericHTMLCollector(BaseCollector):
             return ""
         match = matches[0]
         if isinstance(match, str):
-            return self._normalize(match)
-        return self._normalize(match.text_content())
+            return JobExtractor.normalize(match)
+        return JobExtractor.normalize(match.text_content())
 
     def _link(self, node, selector):
         if not selector:
@@ -111,12 +126,9 @@ class GenericHTMLCollector(BaseCollector):
             return ""
         match = matches[0]
         if isinstance(match, str):
-            return self._normalize(match)
+            return JobExtractor.normalize(match)
         href = match.get("href") or match.get("src") or match.text_content()
-        return self._normalize(href)
-
-    def _normalize(self, value):
-        return " ".join((value or "").split())
+        return JobExtractor.normalize(href)
 
     def _fetch_url(self, url):
         timeout = self.collector_config.timeout if self.collector_config else 20

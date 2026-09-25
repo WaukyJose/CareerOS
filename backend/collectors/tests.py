@@ -8,6 +8,7 @@ from django.test import SimpleTestCase, TestCase
 
 from .base import BaseCollector
 from .espe import ESPECollector
+from .extraction import JobExtractor, LinkFilter
 from .generic_html import GenericHTMLCollector
 from .registry import CollectorRegistry, registry
 from .retry import retry_with_backoff
@@ -252,12 +253,38 @@ class ESPECollectorTests(TestCase):
         self.assertEqual(records[0].location, "Ruminahui, Pichincha")
         self.assertEqual(
             records[0].source_url,
-            "https://uth.espe.edu.ec/wp-content/uploads/2024/05/convocatoria-docente-auxiliar.pdf",
+            "https://uth.espe.edu.ec/convocatorias/vacante-docente-tiempo-completo-sistemas/",
         )
         self.assertEqual(
             records[0].raw_data["source_page"],
             "https://uth.espe.edu.ec/concurso-de-meritos/",
         )
+        self.assertTrue(all(not record.source_url.endswith(".pdf") for record in records))
+        self.assertTrue(all("/download/" not in record.source_url for record in records))
+        self.assertEqual(records[0].department, "Docencia")
+        self.assertEqual(records[0].discipline, "Sistemas")
+        self.assertEqual(records[0].employment_type, "Tiempo completo")
+        self.assertEqual(records[0].posted_date.isoformat(), "2026-09-01")
+        self.assertEqual(records[0].deadline_date.isoformat(), "2026-09-30")
+        self.assertTrue(all("viewer" not in record.source_url for record in records))
+        self.assertTrue(all("/empleos/" not in record.source_url for record in records))
+        self.assertEqual(
+            {record.source_url for record in records},
+            {
+                "https://uth.espe.edu.ec/convocatorias/vacante-docente-tiempo-completo-sistemas/",
+                "https://uth.espe.edu.ec/convocatorias/convocatoria-docente-investigador-electronica/",
+            },
+        )
+
+    def test_attachment_only_page_returns_zero_jobs(self):
+        page = """
+            <nav><a href='/jobs/'>Jobs</a></nav>
+            <a href='/files/convocatoria.pdf'>Convocatoria docente</a>
+            <a href='/download/vacante.zip'>Descargar vacante</a>
+            <a href='/viewer?id=3'>Viewer convocatoria</a>
+        """
+
+        self.assertEqual(ESPECollector().parse(page, self.university), [])
 
     def test_missing_jobs_url_is_graceful(self):
         self.university.jobs_url = ""
@@ -372,6 +399,7 @@ class GenericHTMLCollectorTests(TestCase):
         self.assertEqual(records[0].source, "generic-example")
         self.assertEqual(records[0].source_url, "https://example.edu/careers/research-coordinator")
         self.assertEqual(records[0].description, "Coordinate applied research projects.")
+        self.assertEqual(records[0].posted_date.isoformat(), "2026-10-15")
         self.assertEqual(records[0].raw_data["date_text"], "2026-10-15")
 
     def test_xpath_selectors_parse_records(self):
@@ -396,3 +424,48 @@ class GenericHTMLCollectorTests(TestCase):
 
         self.assertIn("generic-example: new=2 updated=0 skipped=0 errors=0", stdout.getvalue())
         self.assertEqual(Job.objects.count(), 2)
+
+
+class LinkFilterTests(SimpleTestCase):
+    def test_ignores_documents_images_downloads_viewers_and_navigation(self):
+        link_filter = LinkFilter()
+
+        self.assertFalse(link_filter.allow("Convocatoria docente", "https://x.test/job.pdf"))
+        self.assertFalse(link_filter.allow("Research job", "https://x.test/image.png"))
+        self.assertFalse(link_filter.allow("Download vacancy", "https://x.test/download/job"))
+        self.assertFalse(link_filter.allow("Viewer", "https://x.test/viewer?id=1"))
+        self.assertFalse(link_filter.allow("Menu docentes", "https://x.test/menu"))
+
+    def test_include_and_exclude_patterns_are_configurable(self):
+        link_filter = LinkFilter(include_patterns="postdoc", exclude_patterns="archive")
+
+        self.assertTrue(link_filter.allow("Postdoc in biology", "https://x.test/jobs/1"))
+        self.assertFalse(link_filter.allow("Lecturer role", "https://x.test/jobs/2"))
+        self.assertFalse(link_filter.allow("Postdoc archive", "https://x.test/archive/1"))
+
+    def test_allowed_and_blocked_extensions_are_configurable(self):
+        link_filter = LinkFilter(
+            include_patterns="vacancy",
+            allowed_extensions="html htm",
+            blocked_extensions="xml",
+        )
+
+        self.assertTrue(link_filter.allow("Vacancy", "https://x.test/job.html"))
+        self.assertTrue(link_filter.allow("Vacancy", "https://x.test/jobs/1"))
+        self.assertFalse(link_filter.allow("Vacancy", "https://x.test/job.json"))
+        self.assertFalse(link_filter.allow("Vacancy", "https://x.test/job.xml"))
+        self.assertFalse(link_filter.allow("Vacancy", "https://x.test/job.pdf"))
+
+
+class JobExtractorTests(SimpleTestCase):
+    def test_resolves_normalizes_deduplicates_and_skips_navigation(self):
+        page = """
+            <nav><a href='/jobs/menu'> Research job menu </a></nav>
+            <article><a href='../jobs/1'> Research   Fellow </a></article>
+            <article><a href='https://example.edu/careers/jobs/1'>Duplicate job</a></article>
+        """
+        links = JobExtractor(base_url="https://example.edu/careers/list/").extract_links(page)
+
+        self.assertEqual(len(links), 1)
+        self.assertEqual(links[0].title, "Research Fellow")
+        self.assertEqual(links[0].url, "https://example.edu/careers/jobs/1")

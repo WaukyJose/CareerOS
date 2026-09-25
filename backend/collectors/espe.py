@@ -1,67 +1,14 @@
 import logging
-from html.parser import HTMLParser
-from urllib.parse import urljoin
 from urllib.request import Request, urlopen
 
 from universities.models import University
 
 from .base import BaseCollector
-from .registry import registry
+from .extraction import JobExtractor
 from .retry import retry_with_backoff
-from .types import JobRecord
 
 
 logger = logging.getLogger("collectors.espe")
-
-
-class ESPEListingParser(HTMLParser):
-    keywords = (
-        "convocatoria",
-        "concurso",
-        "merito",
-        "mérito",
-        "docente",
-        "academico",
-        "académico",
-        "titular",
-    )
-
-    def __init__(self, base_url):
-        super().__init__()
-        self.base_url = base_url
-        self.links = []
-        self._active_href = None
-        self._active_text = []
-
-    def handle_starttag(self, tag, attrs):
-        if tag != "a":
-            return
-        attrs = dict(attrs)
-        href = attrs.get("href", "").strip()
-        if href:
-            self._active_href = href
-            self._active_text = []
-
-    def handle_data(self, data):
-        if self._active_href:
-            self._active_text.append(data)
-
-    def handle_endtag(self, tag):
-        if tag != "a" or not self._active_href:
-            return
-        title = " ".join(" ".join(self._active_text).split())
-        href = self._active_href
-        haystack = f"{title} {href}".lower()
-        if title and any(keyword in haystack for keyword in self.keywords):
-            self.links.append(
-                {
-                    "title": title,
-                    "url": urljoin(self.base_url, href),
-                    "href": href,
-                }
-            )
-        self._active_href = None
-        self._active_text = []
 
 
 class ESPECollector(BaseCollector):
@@ -81,40 +28,47 @@ class ESPECollector(BaseCollector):
             self.logger.warning("ESPE university record does not define jobs_url.")
             return []
 
-        html = retry_with_backoff(lambda: self.fetcher(university.jobs_url), attempts=3)
-        records = self.parse(html, university)
+        page = retry_with_backoff(lambda: self.fetcher(university.jobs_url), attempts=3)
+        extractor = JobExtractor(
+            base_url=university.jobs_url,
+            include_patterns=self._include_patterns(),
+            exclude_patterns=self._exclude_patterns(),
+            allowed_extensions=self._config_value("allowed_extensions"),
+            blocked_extensions=self._config_value("blocked_extensions"),
+        )
+        links = extractor.extract_links(page)
+        records = [
+            extractor.record_from_link(link=link, source=self.name, university=university)
+            for link in links
+        ]
         self.logger.info("ESPE jobs found: %s", len(records))
         return records
 
-    def parse(self, html, university):
-        parser = ESPEListingParser(university.jobs_url)
-        try:
-            parser.feed(html)
-        except Exception:
-            self.logger.exception("Failed to parse ESPE listings.")
-            return []
+    def parse(self, page, university):
+        extractor = JobExtractor(
+            base_url=university.jobs_url,
+            include_patterns=self._include_patterns(),
+            exclude_patterns=self._exclude_patterns(),
+            allowed_extensions=self._config_value("allowed_extensions"),
+            blocked_extensions=self._config_value("blocked_extensions"),
+        )
+        return [
+            extractor.record_from_link(link=link, source=self.name, university=university)
+            for link in extractor.extract_links(page)
+        ]
 
-        records = []
-        seen_urls = set()
-        for link in parser.links:
-            if link["url"] in seen_urls:
-                continue
-            seen_urls.add(link["url"])
-            records.append(
-                JobRecord(
-                    source=self.name,
-                    source_id=link["url"],
-                    title=link["title"],
-                    institution_name=university.name,
-                    source_url=link["url"],
-                    location=f"{university.city}, {university.province}",
-                    raw_data={
-                        "href": link["href"],
-                        "source_page": university.jobs_url,
-                    },
-                )
-            )
-        return records
+    def _include_patterns(self):
+        if self.collector_config and self.collector_config.include_patterns:
+            return self.collector_config.include_patterns
+        return "\n".join(("vacante", "convocatoria docente", "concurso docente"))
+
+    def _exclude_patterns(self):
+        if self.collector_config and self.collector_config.exclude_patterns:
+            return self.collector_config.exclude_patterns
+        return "\n".join(("bases", "cronograma", "resultado", "reglamento"))
+
+    def _config_value(self, field):
+        return getattr(self.collector_config, field, "") if self.collector_config else ""
 
     def _get_university(self):
         if self.collector_config:

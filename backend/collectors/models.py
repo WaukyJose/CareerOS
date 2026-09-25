@@ -41,6 +41,10 @@ class Collector(BaseModel):
     link_selector = models.CharField(max_length=255, blank=True)
     date_selector = models.CharField(max_length=255, blank=True)
     description_selector = models.CharField(max_length=255, blank=True)
+    include_patterns = models.TextField(blank=True)
+    exclude_patterns = models.TextField(blank=True)
+    allowed_extensions = models.TextField(blank=True)
+    blocked_extensions = models.TextField(blank=True)
     last_run = models.DateTimeField(null=True, blank=True)
     last_success = models.DateTimeField(null=True, blank=True)
     status = models.CharField(

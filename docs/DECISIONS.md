@@ -73,3 +73,9 @@ VS008 uses Celery with Redis transport to run all enabled collectors automatical
 Status: Accepted
 
 VS009 adds `GenericHTMLCollector` for universities whose public job pages can be parsed with configured CSS or XPath selectors. Selector configuration is stored on `Collector` rows, allowing new HTML-based sources to be added without writing Python. The collector skips incomplete listings and returns `JobRecord` objects for persistence through the existing collector pipeline.
+
+## D013 - Shared Vacancy Extraction Filter
+
+Status: Accepted
+
+VS010 introduces `JobExtractor` and `LinkFilter` as shared extraction utilities for collectors. Filtering combines a permanent safety blocklist for attachments and images with configurable include/exclude regular expressions and extension allow/block lists. Structural navigation regions are excluded before links become records. Relative URLs are resolved and deduplicated by their absolute source URL; pages without structured vacancies return no records. ESPE uses the shared extractor so these rules are not source-specific.
