@@ -27,6 +27,8 @@ class BaseCollector(ABC):
             result.add_error(str(exc))
             return result
 
+        result.job_count = len(records)
+
         for record in records:
             result.skipped += 1
             self.logger.debug("Collected job record without persistence: %s", record.source_id)

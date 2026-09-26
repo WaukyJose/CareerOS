@@ -6,6 +6,7 @@ from collectors.types import JobRecord
 from universities.models import University
 
 from .models import Job
+from .enrichment import JobEnrichmentService
 
 
 @dataclass(frozen=True)
@@ -39,12 +40,15 @@ class JobService:
         try:
             job = Job.objects.get(source=record.source, external_id=record.source_id)
         except ObjectDoesNotExist:
-            job = Job.objects.create(
+            job = Job(
                 source=record.source,
                 external_id=record.source_id,
                 status=Job.Status.NEW,
                 **defaults,
             )
+            for field, value in JobEnrichmentService.enrich(job).items():
+                setattr(job, field, value)
+            job.save()
             return JobUpsertResult(job=job, created=True)
 
         changed = False
@@ -58,7 +62,10 @@ class JobService:
 
         if job.status == Job.Status.CLOSED:
             job.status = Job.Status.ACTIVE
-        job.save(update_fields=[*defaults.keys(), "status", "updated_at"])
+        enrichment = JobEnrichmentService.enrich(job)
+        for field, value in enrichment.items():
+            setattr(job, field, value)
+        job.save(update_fields=[*defaults.keys(), *enrichment.keys(), "status", "updated_at"])
         return JobUpsertResult(job=job, updated=True)
 
     @classmethod

@@ -1,6 +1,6 @@
 import re
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from pathlib import PurePosixPath
 from urllib.parse import urljoin, urlparse
 
@@ -150,14 +150,38 @@ class JobExtractor:
         return " ".join((value or "").split())
 
     @staticmethod
-    def parse_date(value):
-        match = re.search(r"\d{4}-\d{2}-\d{2}", value or "")
-        if not match:
-            return None
-        try:
-            return date.fromisoformat(match.group(0))
-        except ValueError:
-            return None
+    def parse_date(value, *, today=None):
+        text = JobExtractor.normalize(value).lower()
+        iso_match = re.search(r"\d{4}-\d{2}-\d{2}", text)
+        if iso_match:
+            try:
+                return date.fromisoformat(iso_match.group(0))
+            except ValueError:
+                return None
+
+        relative_match = re.search(r"hace\s+(\d+)\s+d[ií]as?", text)
+        if relative_match:
+            return (today or date.today()) - timedelta(days=int(relative_match.group(1)))
+
+        months = {
+            "enero": 1, "febrero": 2, "marzo": 3, "abril": 4,
+            "mayo": 5, "junio": 6, "julio": 7, "agosto": 8,
+            "septiembre": 9, "octubre": 10, "noviembre": 11, "diciembre": 12,
+        }
+        spanish_match = re.search(
+            r"(\d{1,2})\s+de\s+(" + "|".join(months) + r")(?:,|\s+de)?\s+(\d{4})",
+            text,
+        )
+        if spanish_match:
+            try:
+                return date(
+                    int(spanish_match.group(3)),
+                    months[spanish_match.group(2)],
+                    int(spanish_match.group(1)),
+                )
+            except ValueError:
+                return None
+        return None
 
     @staticmethod
     def infer_fields(title):

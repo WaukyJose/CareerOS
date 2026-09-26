@@ -1,9 +1,13 @@
 from io import StringIO
+import importlib
+from datetime import date, timedelta
 from pathlib import Path
+from urllib.error import HTTPError
 from unittest.mock import patch
 
 from django.core.management import call_command
 from django.core.management.base import CommandError
+from django.core.exceptions import ValidationError
 from django.test import SimpleTestCase, TestCase
 
 from .base import BaseCollector
@@ -13,7 +17,7 @@ from .generic_html import GenericHTMLCollector
 from .registry import CollectorRegistry, registry
 from .retry import retry_with_backoff
 from .types import JobRecord
-from collectors.models import Collector, CollectorExecution
+from collectors.models import Collector, CollectorExecution, CollectorTemplate
 from jobs.models import Job
 from universities.models import University
 
@@ -38,6 +42,13 @@ class FailingCollector(BaseCollector):
 
     def collect(self):
         raise RuntimeError("source unavailable")
+
+
+class TimeoutCollector(BaseCollector):
+    name = "timeout"
+
+    def collect(self):
+        raise TimeoutError("timed out after 30 seconds")
 
 
 class BaseCollectorTests(SimpleTestCase):
@@ -133,6 +144,42 @@ class RetryWithBackoffTests(SimpleTestCase):
         with self.assertRaisesMessage(ValueError, "attempts"):
             retry_with_backoff(lambda: None, attempts=0)
 
+    def test_default_retries_transient_timeout(self):
+        calls = []
+
+        def operation():
+            calls.append("called")
+            raise TimeoutError("slow site")
+
+        with self.assertRaises(TimeoutError):
+            retry_with_backoff(operation, attempts=3, sleeper=lambda delay: None)
+
+        self.assertEqual(len(calls), 3)
+
+    def test_default_does_not_retry_non_network_error(self):
+        calls = []
+
+        def operation():
+            calls.append("called")
+            raise ValueError("bad parser")
+
+        with self.assertRaises(ValueError):
+            retry_with_backoff(operation, attempts=3, sleeper=lambda delay: None)
+
+        self.assertEqual(len(calls), 1)
+
+    def test_non_transient_http_error_is_not_retried(self):
+        calls = []
+
+        def operation():
+            calls.append("called")
+            raise HTTPError("https://example.edu", 404, "Not Found", {}, None)
+
+        with self.assertRaises(HTTPError):
+            retry_with_backoff(operation, attempts=3, sleeper=lambda delay: None)
+
+        self.assertEqual(len(calls), 1)
+
 
 class RunCollectorsCommandTests(TestCase):
     def setUp(self):
@@ -151,6 +198,15 @@ class RunCollectorsCommandTests(TestCase):
 
         self.assertIn("No collectors registered.", stdout.getvalue())
 
+    def test_collector_timeout_defaults_to_thirty_seconds(self):
+        collector = Collector.objects.create(
+            university=University.objects.get(name="Example University"),
+            name="default-timeout",
+            module_path="collectors.tests.ExampleCollector",
+        )
+
+        self.assertEqual(collector.timeout, 30)
+
     def test_command_runs_registered_collector(self):
         Collector.objects.create(
             university=University.objects.get(name="Example University"),
@@ -168,6 +224,10 @@ class RunCollectorsCommandTests(TestCase):
         self.assertEqual(collector.status, Collector.Status.SUCCESS)
         self.assertIsNotNone(collector.last_run)
         self.assertIsNotNone(collector.last_success)
+        self.assertEqual(collector.health_status, Collector.HealthStatus.HEALTHY)
+        self.assertEqual(collector.last_job_count, 1)
+        self.assertIsNotNone(collector.last_duration)
+        self.assertEqual(collector.last_error, "")
 
     def test_command_rejects_unknown_requested_collector(self):
         with self.assertRaises(CommandError):
@@ -224,6 +284,31 @@ class RunCollectorsCommandTests(TestCase):
         self.assertEqual(collector.status, Collector.Status.ERROR)
         self.assertEqual(CollectorExecution.objects.get().errors, 1)
 
+    def test_timeout_is_recorded_and_remaining_collectors_continue(self):
+        university = University.objects.get(name="Example University")
+        Collector.objects.create(
+            university=university,
+            name="timeout",
+            module_path="collectors.tests.TimeoutCollector",
+            priority=10,
+        )
+        Collector.objects.create(
+            university=university,
+            name="example",
+            module_path="collectors.tests.ExampleCollector",
+            priority=20,
+        )
+        stdout = StringIO()
+
+        call_command("run_collectors", stdout=stdout)
+
+        self.assertIn("timeout: new=0 updated=0 skipped=0 errors=1", stdout.getvalue())
+        self.assertIn("example: new=1 updated=0 skipped=0 errors=0", stdout.getvalue())
+        self.assertEqual(Job.objects.count(), 1)
+        execution = CollectorExecution.objects.get(collector_name="timeout")
+        self.assertEqual(execution.errors, 1)
+        self.assertEqual(execution.error_reason, "Timeout: timed out after 30 seconds")
+
 
 class ESPECollectorTests(TestCase):
     def setUp(self):
@@ -275,6 +360,16 @@ class ESPECollectorTests(TestCase):
                 "https://uth.espe.edu.ec/convocatorias/convocatoria-docente-investigador-electronica/",
             },
         )
+
+    def test_http_request_uses_robust_defaults(self):
+        with patch("collectors.espe.urlopen", return_value=FakeResponse(self.sample_html)) as mocked:
+            ESPECollector()._fetch_url(self.university.jobs_url)
+
+        request = mocked.call_args.args[0]
+        self.assertEqual(mocked.call_args.kwargs["timeout"], 30)
+        self.assertTrue(request.get_header("User-agent").startswith("CareerOS/"))
+        self.assertIn("text/html", request.get_header("Accept"))
+        self.assertIn("es", request.get_header("Accept-language"))
 
     def test_attachment_only_page_returns_zero_jobs(self):
         page = """
@@ -425,6 +520,151 @@ class GenericHTMLCollectorTests(TestCase):
         self.assertIn("generic-example: new=2 updated=0 skipped=0 errors=0", stdout.getvalue())
         self.assertEqual(Job.objects.count(), 2)
 
+    def test_configured_http_timeout_is_used(self):
+        self.collector_config.timeout = 47
+        collector = GenericHTMLCollector(collector_config=self.collector_config)
+
+        with patch("collectors.generic_html.urlopen", return_value=FakeResponse(self.sample_html)) as mocked:
+            collector._fetch_url(self.university.jobs_url)
+
+        self.assertEqual(mocked.call_args.kwargs["timeout"], 47)
+
+    def test_expired_and_old_jobs_are_ignored(self):
+        today = date.today()
+        self.collector_config.date_selector = ".date"
+        self.collector_config.deadline_selector = ".deadline"
+        self.collector_config.max_age_days = 30
+        page = f"""
+            <article class='job-card'>
+              <h2 class='title'>Research Fellow active</h2>
+              <a class='details' href='/jobs/active'>Details</a>
+              <span class='date'>{(today - timedelta(days=5)).isoformat()}</span>
+              <span class='deadline'>{(today + timedelta(days=5)).isoformat()}</span>
+            </article>
+            <article class='job-card'>
+              <h2 class='title'>Research Fellow expired</h2>
+              <a class='details' href='/jobs/expired'>Details</a>
+              <span class='date'>{(today - timedelta(days=5)).isoformat()}</span>
+              <span class='deadline'>{(today - timedelta(days=1)).isoformat()}</span>
+            </article>
+            <article class='job-card'>
+              <h2 class='title'>Research Fellow historical</h2>
+              <a class='details' href='/jobs/old'>Details</a>
+              <span class='date'>{(today - timedelta(days=31)).isoformat()}</span>
+              <span class='deadline'>{(today + timedelta(days=5)).isoformat()}</span>
+            </article>
+        """
+
+        records = GenericHTMLCollector(
+            collector_config=self.collector_config,
+            fetcher=lambda url: page,
+        ).collect()
+
+        self.assertEqual([record.title for record in records], ["Research Fellow active"])
+        self.assertEqual(records[0].posted_date, today - timedelta(days=5))
+        self.assertEqual(records[0].deadline_date, today + timedelta(days=5))
+
+    def test_template_supplies_selector_configuration(self):
+        template = CollectorTemplate.objects.create(
+            name="Test cards",
+            list_selector=".job-card",
+            title_selector=".title",
+            link_selector=".details",
+            date_selector=".date",
+            description_selector=".summary",
+        )
+        self.collector_config.template = template
+        self.collector_config.list_selector = ""
+        self.collector_config.title_selector = ""
+        self.collector_config.link_selector = ""
+        self.collector_config.date_selector = ""
+        self.collector_config.description_selector = ""
+        self.collector_config.full_clean()
+
+        records = GenericHTMLCollector(
+            collector_config=self.collector_config,
+            fetcher=lambda url: self.sample_html,
+        ).collect()
+
+        self.assertEqual(len(records), 2)
+
+    def test_generic_configuration_requires_valid_selectors(self):
+        self.collector_config.list_selector = "div["
+
+        with self.assertRaises(ValidationError):
+            self.collector_config.full_clean()
+
+
+class TestCollectorCommandTests(TestCase):
+    def setUp(self):
+        university = University.objects.create(
+            name="Command University",
+            city="Quito",
+            province="Pichincha",
+            type=University.UniversityType.PUBLIC,
+            website="https://command.example.edu",
+            jobs_url="https://command.example.edu/jobs/",
+        )
+        self.definition = Collector.objects.create(
+            university=university,
+            name="command-example",
+            module_path="collectors.generic_html.GenericHTMLCollector",
+            list_selector=".job-card",
+            title_selector=".title",
+            link_selector=".details",
+        )
+        self.page = """
+            <article class='job-card'>
+              <h2 class='title'>Research Fellow</h2>
+              <a class='details' href='/jobs/fellow'>Details</a>
+            </article>
+        """
+
+    def test_command_prints_jobs_without_persisting(self):
+        stdout = StringIO()
+        with patch("collectors.generic_html.urlopen", return_value=FakeResponse(self.page)):
+            call_command("test_collector", "command-example", stdout=stdout)
+
+        self.assertIn("Research Fellow | https://command.example.edu/jobs/fellow", stdout.getvalue())
+        self.assertIn("Extracted 1 job(s).", stdout.getvalue())
+        self.assertEqual(Job.objects.count(), 0)
+        execution = CollectorExecution.objects.get(collector_name="command-example")
+        self.assertEqual(execution.skipped, 1)
+        self.assertEqual(execution.errors, 0)
+        self.assertEqual(execution.error_reason, "")
+        self.definition.refresh_from_db()
+        self.assertEqual(self.definition.health_status, Collector.HealthStatus.HEALTHY)
+        self.assertEqual(self.definition.last_job_count, 1)
+
+    def test_command_reports_invalid_selector(self):
+        self.definition.list_selector = "div["
+        self.definition.save(update_fields=["list_selector"])
+
+        with self.assertRaisesMessage(CommandError, "Collector test failed"):
+            call_command("test_collector", "command-example")
+
+        self.definition.refresh_from_db()
+        self.assertEqual(self.definition.health_status, Collector.HealthStatus.ERROR)
+        self.assertIn("Invalid selector", self.definition.last_error)
+        execution = CollectorExecution.objects.get(collector_name="command-example")
+        self.assertEqual(execution.errors, 1)
+        self.assertIn("ValidationError", execution.error_reason)
+
+    def test_command_reports_selector_with_no_matches(self):
+        self.definition.list_selector = ".missing"
+        self.definition.save(update_fields=["list_selector"])
+        stderr = StringIO()
+        with patch("collectors.generic_html.urlopen", return_value=FakeResponse(self.page)):
+            call_command("test_collector", "command-example", stderr=stderr)
+
+        self.assertIn("Selector matched no elements: .missing", stderr.getvalue())
+        self.definition.refresh_from_db()
+        self.assertEqual(self.definition.health_status, Collector.HealthStatus.EMPTY)
+        self.assertEqual(self.definition.last_job_count, 0)
+        execution = CollectorExecution.objects.get(collector_name="command-example")
+        self.assertEqual(execution.skipped, 0)
+        self.assertEqual(execution.errors, 0)
+
 
 class LinkFilterTests(SimpleTestCase):
     def test_ignores_documents_images_downloads_viewers_and_navigation(self):
@@ -469,3 +709,56 @@ class JobExtractorTests(SimpleTestCase):
         self.assertEqual(len(links), 1)
         self.assertEqual(links[0].title, "Research Fellow")
         self.assertEqual(links[0].url, "https://example.edu/careers/jobs/1")
+
+    def test_parses_spanish_and_relative_dates(self):
+        today = date(2026, 9, 25)
+
+        self.assertEqual(
+            JobExtractor.parse_date("Publicado: 19 de agosto, 2026"),
+            date(2026, 8, 19),
+        )
+        self.assertEqual(
+            JobExtractor.parse_date("Hace 7 días", today=today),
+            date(2026, 9, 18),
+        )
+
+
+class FirstUniversitiesConfigurationTests(TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        names = [
+            "Universidad San Francisco de Quito",
+            "Pontificia Universidad Catolica del Ecuador",
+            "Escuela Superior Politecnica del Litoral",
+            "Escuela Politecnica Nacional",
+            "Universidad Tecnica Particular de Loja",
+        ]
+        for index, name in enumerate(names):
+            University.objects.create(
+                name=name,
+                city="Test City",
+                province="Test Province",
+                type="public",
+                website=f"https://university-{index}.example",
+            )
+        migration = importlib.import_module(
+            "collectors.migrations.0009_collector_deadline_selector_collector_max_age_days_and_more"
+        )
+        from django.apps import apps
+
+        migration.configure_first_universities(apps, None)
+
+    def test_target_universities_have_generic_collectors(self):
+        expected = {"usfq", "puce", "espol", "epn", "utpl"}
+        collectors = Collector.objects.filter(name__in=expected).select_related("university", "template")
+
+        self.assertEqual({collector.name for collector in collectors}, expected)
+        for collector in collectors:
+            self.assertEqual(
+                collector.module_path,
+                "collectors.generic_html.GenericHTMLCollector",
+            )
+            self.assertTrue(collector.university.jobs_url)
+            self.assertIsNotNone(collector.template)
+            self.assertEqual(collector.max_age_days, 30)
+            collector.full_clean()

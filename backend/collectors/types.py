@@ -21,6 +21,7 @@ class JobRecord:
 
 @dataclass
 class CollectorResult:
+    job_count: int = 0
     new: int = 0
     updated: int = 0
     skipped: int = 0

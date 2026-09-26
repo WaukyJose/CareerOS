@@ -1,11 +1,14 @@
 import logging
+from datetime import timedelta
 from urllib.parse import urljoin
 from urllib.request import Request, urlopen
 
+from django.utils import timezone
 from lxml import html
 
 from .base import BaseCollector
 from .extraction import JobExtractor, LinkFilter
+from .http import DEFAULT_HTTP_HEADERS, DEFAULT_HTTP_TIMEOUT
 from .retry import retry_with_backoff
 from .types import JobRecord
 
@@ -19,6 +22,7 @@ class GenericHTMLCollector(BaseCollector):
     def __init__(self, fetcher=None, logger=None, collector_config=None):
         super().__init__(logger=logger, collector_config=collector_config)
         self.fetcher = fetcher or self._fetch_url
+        self.selector_matches = {}
 
     def collect(self):
         if not self.collector_config:
@@ -28,7 +32,7 @@ class GenericHTMLCollector(BaseCollector):
         if not university.jobs_url:
             self.logger.warning("%s does not define jobs_url.", university.name)
             return []
-        if not self.collector_config.list_selector:
+        if not self._config("list_selector"):
             self.logger.warning("%s does not define list_selector.", self.collector_config.name)
             return []
 
@@ -46,33 +50,45 @@ class GenericHTMLCollector(BaseCollector):
 
     def parse(self, page):
         document = html.fromstring(page)
-        items = self._select(document, self.collector_config.list_selector)
+        items = self._select(document, self._config("list_selector"))
         records = []
         seen_urls = set()
         university = self.collector_config.university
         link_filter = LinkFilter(
-            self.collector_config.include_patterns,
-            self.collector_config.exclude_patterns,
-            self.collector_config.allowed_extensions,
-            self.collector_config.blocked_extensions,
+            self._config("include_patterns"),
+            self._config("exclude_patterns"),
+            self._config("allowed_extensions"),
+            self._config("blocked_extensions"),
         )
 
         for item in items:
-            title = self._text(item, self.collector_config.title_selector)
-            link = self._link(item, self.collector_config.link_selector)
+            title = self._text(item, self._config("title_selector"))
+            link = self._link(item, self._config("link_selector"))
             if not title or not link:
                 self.logger.warning("Skipping listing with missing title or link.")
                 continue
 
             source_url = urljoin(university.jobs_url, link)
-            if not link_filter.allow(title, source_url):
+            if not link_filter.allow(title, source_url, context=JobExtractor.normalize(item.text_content())):
                 continue
             if source_url in seen_urls:
                 continue
             seen_urls.add(source_url)
 
-            description = self._text(item, self.collector_config.description_selector)
-            date_text = self._text(item, self.collector_config.date_selector)
+            description = self._text(item, self._config("description_selector"))
+            date_text = self._text(item, self._config("date_selector"))
+            deadline_text = self._text(item, self._config("deadline_selector"))
+            posted_date = JobExtractor.parse_date(date_text)
+            deadline_date = JobExtractor.parse_date(deadline_text)
+            today = timezone.localdate()
+            if deadline_date and deadline_date < today:
+                continue
+            if (
+                self.collector_config.max_age_days
+                and posted_date
+                and posted_date < today - timedelta(days=self.collector_config.max_age_days)
+            ):
+                continue
             department, discipline, employment_type = JobExtractor.infer_fields(title)
             records.append(
                 JobRecord(
@@ -85,12 +101,14 @@ class GenericHTMLCollector(BaseCollector):
                     department=department,
                     discipline=discipline,
                     employment_type=employment_type,
-                    posted_date=JobExtractor.parse_date(date_text),
+                    posted_date=posted_date,
+                    deadline_date=deadline_date,
                     description=description,
                     raw_data={
                         "source_page": university.jobs_url,
                         "href": link,
                         "date_text": date_text,
+                        "deadline_text": deadline_text,
                     },
                 )
             )
@@ -100,12 +118,15 @@ class GenericHTMLCollector(BaseCollector):
         if not selector:
             return []
         try:
-            if selector.startswith("/") or selector.startswith(".//"):
-                return node.xpath(selector)
-            return node.cssselect(selector)
-        except Exception:
-            self.logger.exception("Invalid selector: %s", selector)
-            return []
+            if selector.startswith("/") or selector.startswith("./"):
+                matches = node.xpath(selector)
+            else:
+                matches = node.cssselect(selector)
+            self.selector_matches[selector] = self.selector_matches.get(selector, 0) + len(matches)
+            return matches
+        except Exception as exc:
+            self.logger.error("Selector failed selector=%r error=%s", selector, exc)
+            raise ValueError(f"Selector failed ({selector}): {exc}") from exc
 
     def _text(self, node, selector):
         if not selector:
@@ -131,7 +152,10 @@ class GenericHTMLCollector(BaseCollector):
         return JobExtractor.normalize(href)
 
     def _fetch_url(self, url):
-        timeout = self.collector_config.timeout if self.collector_config else 20
-        request = Request(url, headers={"User-Agent": "CareerOS/0.1"})
+        timeout = self.collector_config.timeout if self.collector_config else DEFAULT_HTTP_TIMEOUT
+        request = Request(url, headers=DEFAULT_HTTP_HEADERS)
         with urlopen(request, timeout=timeout) as response:
             return response.read().decode("utf-8", errors="replace")
+
+    def _config(self, field):
+        return self.collector_config.config_value(field)

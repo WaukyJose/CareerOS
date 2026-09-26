@@ -1,10 +1,16 @@
+import logging
+
+from django.core.exceptions import ImproperlyConfigured, ValidationError
 from django.core.management.base import BaseCommand, CommandError
-from django.core.exceptions import ImproperlyConfigured
 from django.utils import timezone
 
 from collectors.models import Collector, CollectorExecution
 from collectors.registry import registry
+from collectors.retry import error_reason
 from jobs.services import JobService
+
+
+logger = logging.getLogger("collectors.runner")
 
 
 class Command(BaseCommand):
@@ -33,16 +39,22 @@ class Command(BaseCommand):
 
         for collector_definition in selected:
             started_at = timezone.now()
+            logger.info("Collector run started name=%s", collector_definition.name)
             result = None
             collector_definition.last_run = started_at
             collector_definition.status = Collector.Status.RUNNING
             collector_definition.save(update_fields=["last_run", "status", "updated_at"])
             try:
+                collector_definition.full_clean()
                 collector_class = registry.load_class(collector_definition.module_path)
                 collector = collector_class(collector_config=collector_definition)
                 result = self._run_and_persist(collector)
-            except (ImproperlyConfigured, TypeError) as exc:
+            except (ImproperlyConfigured, TypeError, ValidationError) as exc:
+                logger.error("Collector configuration failed name=%s error=%s", collector_definition.name, exc)
                 result = self._error_result(str(exc))
+            except Exception as exc:
+                logger.exception("Collector setup failed name=%s", collector_definition.name)
+                result = self._error_result(error_reason(exc))
             finished_at = timezone.now()
             CollectorExecution.objects.create(
                 collector_name=collector_definition.name,
@@ -52,15 +64,35 @@ class Command(BaseCommand):
                 updated=result.updated,
                 skipped=result.skipped,
                 errors=len(result.errors),
+                error_reason="\n".join(result.errors),
             )
-            update_fields = ["status", "updated_at"]
+            collector_definition.last_job_count = result.job_count
+            collector_definition.last_duration = finished_at - started_at
+            collector_definition.last_error = "\n".join(result.errors)
+            update_fields = [
+                "status", "health_status", "last_job_count", "last_duration",
+                "last_error", "updated_at",
+            ]
             if result.succeeded:
                 collector_definition.status = Collector.Status.SUCCESS
+                collector_definition.health_status = (
+                    Collector.HealthStatus.HEALTHY
+                    if result.job_count
+                    else Collector.HealthStatus.EMPTY
+                )
                 collector_definition.last_success = finished_at
                 update_fields.append("last_success")
             else:
                 collector_definition.status = Collector.Status.ERROR
+                collector_definition.health_status = Collector.HealthStatus.ERROR
             collector_definition.save(update_fields=update_fields)
+            logger.info(
+                "Collector run finished name=%s jobs=%s duration=%s errors=%s",
+                collector_definition.name,
+                result.job_count,
+                collector_definition.last_duration,
+                len(result.errors),
+            )
             self.stdout.write(
                 f"{collector_definition.name}: new={result.new} updated={result.updated} "
                 f"skipped={result.skipped} errors={len(result.errors)}"
@@ -80,8 +112,10 @@ class Command(BaseCommand):
             records = list(collector.collect())
         except Exception as exc:
             collector.logger.exception("Collector failed: %s", collector.name)
-            result.add_error(str(exc))
+            result.add_error(error_reason(exc))
             return result
+
+        result.job_count = len(records)
 
         for record in records:
             try:

@@ -79,3 +79,21 @@ VS009 adds `GenericHTMLCollector` for universities whose public job pages can be
 Status: Accepted
 
 VS010 introduces `JobExtractor` and `LinkFilter` as shared extraction utilities for collectors. Filtering combines a permanent safety blocklist for attachments and images with configurable include/exclude regular expressions and extension allow/block lists. Structural navigation regions are excluded before links become records. Relative URLs are resolved and deduplicated by their absolute source URL; pages without structured vacancies return no records. ESPE uses the shared extractor so these rules are not source-specific.
+
+## D014 - Template-Based No-Code Collector Configuration
+
+Status: Accepted
+
+VS011 stores reusable generic HTML selector and filtering presets in `CollectorTemplate`. A collector may inherit a template and override individual values, keeping university onboarding database- and Admin-driven without hiding the effective configuration. Generic configuration is validated before execution. Preview runs fetch and extract without persisting jobs, while both preview and operational runs update independent health metrics (`health_status`, job count, duration, and latest error). An empty successful extraction is distinct from a failed collector.
+
+## D015 - Transient-Only HTTP Retries and Per-Source Failure Isolation
+
+Status: Accepted
+
+VS011.5 standardizes collector HTTP requests with a configurable 30-second default timeout and explicit User-Agent, Accept, and Accept-Language headers. Automatic retries are restricted to transient network failures and retryable HTTP statuses; permanent responses and application errors are not retried. Each collector run is an isolation boundary: timeout details are stored on `CollectorExecution`, the collector is marked unhealthy, and subsequent collectors continue running.
+
+## D016 - Official Sources With Conservative Active-Opportunity Filtering
+
+Status: Accepted
+
+VS012 onboards USFQ, PUCE, ESPOL, EPN, and UTPL through `GenericHTMLCollector` records and reusable database templates rather than source-specific Python classes. Official institutional pages are authoritative even when they currently yield zero jobs. Configurable deadline selectors and posting-age limits enforce conservative active-opportunity behavior: parsed expired deadlines are rejected, postings older than 30 days are rejected when dates are available, and source-specific closed or historical markers are excluded. It is preferable to return zero jobs rather than misclassify an archive, result notice, or attachment as an active vacancy.

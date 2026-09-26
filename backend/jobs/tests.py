@@ -1,12 +1,15 @@
 from django.db import IntegrityError
+from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.urls import reverse
 from rest_framework.test import APIClient
+from unittest.mock import patch
 
 from collectors.types import JobRecord
 from universities.models import University
 
 from .models import Job
+from .enrichment import JobEnrichmentService
 from .serializers import JobSerializer
 from .services import JobService
 
@@ -68,6 +71,75 @@ class JobServiceTests(TestCase):
                 url="https://example.edu/jobs/duplicate",
             )
 
+    def test_upsert_enriches_and_normalizes_collected_job(self):
+        record = JobRecord(
+            source="example",
+            source_id="enriched-job",
+            title="AI Research Scientist",
+            institution_name=self.university.name,
+            source_url="https://example.edu/jobs/enriched",
+            department="  Department of Computing  ",
+            employment_type="Tiempo Completo",
+            description=(
+                "Doctorado required. Permanent remote role. Salary: $2,500. "
+                "Bilingual English and Spanish. Machine learning and Python research."
+            ),
+        )
+
+        job = JobService.upsert(record).job
+
+        self.assertEqual(job.discipline, "Artificial Intelligence")
+        self.assertEqual(job.department, "Department of Computing")
+        self.assertEqual(job.required_degree, "PhD")
+        self.assertEqual(job.employment_type, "Full-time")
+        self.assertEqual(job.salary, "$2,500")
+        self.assertEqual(job.contract_type, "Permanent")
+        self.assertEqual(job.language, "English and Spanish")
+        self.assertTrue(job.remote)
+        self.assertEqual(
+            job.keywords,
+            ["Artificial Intelligence", "Machine Learning", "Python", "Research"],
+        )
+
+    def test_enrichment_runs_on_create_and_change_but_not_unchanged_upsert(self):
+        original = self._record(title="Research Fellow")
+        changed = self._record(title="Senior Research Fellow")
+
+        with patch.object(
+            JobEnrichmentService,
+            "enrich",
+            wraps=JobEnrichmentService.enrich,
+        ) as enrich:
+            JobService.upsert(original)
+            JobService.upsert(original)
+            JobService.upsert(changed)
+
+        self.assertEqual(enrich.call_count, 2)
+
+    def test_changed_job_recomputes_enriched_values(self):
+        original = JobRecord(
+            source="example",
+            source_id="job-degree",
+            title="Research Fellow",
+            institution_name=self.university.name,
+            source_url="https://example.edu/jobs/degree",
+            description="PhD required.",
+        )
+        changed = JobRecord(
+            source="example",
+            source_id="job-degree",
+            title="Research Fellow",
+            institution_name=self.university.name,
+            source_url="https://example.edu/jobs/degree",
+            description="Master's degree required.",
+        )
+        JobService.upsert(original)
+
+        result = JobService.upsert(changed)
+
+        self.assertTrue(result.updated)
+        self.assertEqual(result.job.required_degree, "Master's")
+
     def _record(self, title="Research Fellow"):
         return JobRecord(
             source="example",
@@ -109,6 +181,8 @@ class JobSerializerTests(TestCase):
 class JobAPITests(TestCase):
     def setUp(self):
         self.client = APIClient()
+        self.user = get_user_model().objects.create_user(username="jobs-user", password="test-pass")
+        self.client.force_authenticate(self.user)
         self.pichincha = University.objects.create(
             name="Alpha University",
             city="Quito",

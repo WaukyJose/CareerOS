@@ -5,6 +5,7 @@ from universities.models import University
 
 from .base import BaseCollector
 from .extraction import JobExtractor
+from .http import DEFAULT_HTTP_HEADERS, DEFAULT_HTTP_TIMEOUT
 from .retry import retry_with_backoff
 
 
@@ -76,7 +77,7 @@ class ESPECollector(BaseCollector):
         return University.objects.filter(name=self.university_name).first()
 
     def _fetch_url(self, url):
-        timeout = self.collector_config.timeout if self.collector_config else 20
-        request = Request(url, headers={"User-Agent": "CareerOS/0.1"})
+        timeout = self.collector_config.timeout if self.collector_config else DEFAULT_HTTP_TIMEOUT
+        request = Request(url, headers=DEFAULT_HTTP_HEADERS)
         with urlopen(request, timeout=timeout) as response:
             return response.read().decode("utf-8", errors="replace")

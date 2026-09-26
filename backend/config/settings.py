@@ -19,8 +19,12 @@ ALLOWED_HOSTS = ["127.0.0.1", "localhost"]
 
 INSTALLED_APPS = [
     'rest_framework',
+    'rest_framework.authtoken',
+    'applications',
     'collectors',
+    'dashboard',
     'jobs',
+    'profiles',
     'universities',
     'django.contrib.admin',
     'django.contrib.auth',
@@ -115,6 +119,12 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 REST_FRAMEWORK = {
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
     "PAGE_SIZE": 20,
+    "DEFAULT_AUTHENTICATION_CLASSES": [
+        "rest_framework.authentication.TokenAuthentication",
+    ],
+    "DEFAULT_PERMISSION_CLASSES": [
+        "rest_framework.permissions.IsAuthenticated",
+    ],
 }
 
 CELERY_BROKER_URL = "redis://localhost:6379/0"
