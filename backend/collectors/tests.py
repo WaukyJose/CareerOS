@@ -8,6 +8,7 @@ from unittest.mock import patch
 from django.core.management import call_command
 from django.core.management.base import CommandError
 from django.core.exceptions import ValidationError
+from django.contrib.auth import get_user_model
 from django.test import SimpleTestCase, TestCase
 
 from .base import BaseCollector
@@ -19,6 +20,7 @@ from .retry import retry_with_backoff
 from .types import JobRecord
 from collectors.models import Collector, CollectorExecution, CollectorTemplate
 from jobs.models import Job
+from profiles.models import JobMatch, ResearcherProfile
 from universities.models import University
 
 
@@ -308,6 +310,104 @@ class RunCollectorsCommandTests(TestCase):
         execution = CollectorExecution.objects.get(collector_name="timeout")
         self.assertEqual(execution.errors, 1)
         self.assertEqual(execution.error_reason, "Timeout: timed out after 30 seconds")
+
+
+class RefreshJobsCommandTests(TestCase):
+    def setUp(self):
+        self.university = University.objects.create(
+            name="Example University",
+            city="Quito",
+            province="Pichincha",
+            type=University.UniversityType.PUBLIC,
+            website="https://example.edu",
+        )
+        user = get_user_model().objects.create_user(username="refresh-user")
+        self.profile = ResearcherProfile.objects.create(
+            user=user,
+            full_name="Refresh User",
+        )
+
+    @patch("collectors.management.commands.refresh_jobs.call_command")
+    def test_invokes_existing_commands_in_order(self, mocked_call_command):
+        invoked = []
+
+        def run_command(name, **kwargs):
+            invoked.append(name)
+            if name == "compute_matches":
+                kwargs["stdout"].write("Matches computed: created=0 updated=0")
+
+        mocked_call_command.side_effect = run_command
+
+        call_command("refresh_jobs", stdout=StringIO())
+
+        self.assertEqual(invoked, ["run_collectors", "compute_matches"])
+
+    def test_runs_collectors_then_matches_and_prints_totals(self):
+        Collector.objects.create(
+            university=self.university,
+            name="example",
+            module_path="collectors.tests.ExampleCollector",
+        )
+        job = Job.objects.create(
+            university=self.university,
+            source="example",
+            external_id="job-1",
+            title="Research Fellow",
+            url="https://example.edu/jobs/1",
+            status=Job.Status.ACTIVE,
+        )
+        stdout = StringIO()
+
+        call_command("refresh_jobs", stdout=stdout)
+
+        self.assertEqual(JobMatch.objects.filter(job=job, researcher_profile=self.profile).count(), 1)
+        self.assertEqual(
+            stdout.getvalue().splitlines(),
+            [
+                "example: new=0 updated=0 skipped=1 errors=0",
+                "Collectors summary:",
+                "- new: 0",
+                "- updated: 0",
+                "- skipped: 1",
+                "- errors: 0",
+                "Matches:",
+                "- created: 1",
+                "- updated: 0",
+            ],
+        )
+
+    def test_collector_failure_does_not_stop_remaining_pipeline(self):
+        Collector.objects.create(
+            university=self.university,
+            name="timeout",
+            module_path="collectors.tests.TimeoutCollector",
+            priority=10,
+        )
+        Collector.objects.create(
+            university=self.university,
+            name="example",
+            module_path="collectors.tests.ExampleCollector",
+            priority=20,
+        )
+        stdout = StringIO()
+
+        call_command("refresh_jobs", stdout=stdout)
+
+        output = stdout.getvalue()
+        collector_lines = [line for line in output.splitlines() if line.startswith(("timeout:", "example:"))]
+        self.assertEqual(len(collector_lines), 2)
+        self.assertIn("error=Timeout: timed out after 30 seconds", collector_lines[0])
+        self.assertIn("- new: 1", output)
+        self.assertIn("- errors: 1", output)
+        self.assertIn("Matches:", output)
+        self.assertEqual(Job.objects.count(), 1)
+
+    @patch("collectors.management.commands.refresh_jobs.call_command")
+    def test_unexpected_internal_error_raises_command_error(self, mocked_call_command):
+        mocked_call_command.side_effect = RuntimeError("database unavailable")
+
+        with self.assertRaisesMessage(CommandError, "Job refresh failed: database unavailable"):
+            call_command("refresh_jobs", stdout=StringIO())
 
 
 class ESPECollectorTests(TestCase):
@@ -762,3 +862,66 @@ class FirstUniversitiesConfigurationTests(TestCase):
             self.assertIsNotNone(collector.template)
             self.assertEqual(collector.max_age_days, 30)
             collector.full_clean()
+
+
+class VS019UDLAConfigurationTests(TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        University.objects.create(
+            name="Universidad de Las Americas",
+            city="Distrito Metropolitano de Quito",
+            province="Pichincha",
+            type=University.UniversityType.PRIVATE_SELFFINANCED,
+            website="https://www.udla.edu.ec",
+        )
+        migration = importlib.import_module(
+            "collectors.migrations.0010_seed_vs019_udla_collector"
+        )
+        from django.apps import apps
+
+        migration.configure_vs019_udla(apps, None)
+
+    def test_udla_uses_reusable_generic_template_and_thirty_day_filter(self):
+        collector = Collector.objects.select_related("university", "template").get(name="udla")
+
+        self.assertEqual(
+            collector.module_path,
+            "collectors.generic_html.GenericHTMLCollector",
+        )
+        self.assertEqual(
+            collector.university.jobs_url,
+            "https://empleos.udla.edu.ec/search/?q=&locationsearch=",
+        )
+        self.assertEqual(collector.template.name, "SAP SuccessFactors job results")
+        self.assertEqual(collector.max_age_days, 30)
+        collector.full_clean()
+
+    def test_udla_selectors_extract_successfactors_results(self):
+        collector = Collector.objects.get(name="udla")
+        page = """
+            <table id="searchresults"><tbody>
+              <tr class="data-row">
+                <td class="colTitle">
+                  <span class="jobTitle hidden-phone">
+                    <a class="jobTitle-link" href="/job/QUITO-DOCENTE/123/">Docente de Física</a>
+                  </span>
+                </td>
+                <td class="colLocation hidden-phone"><span class="jobLocation">QUITO, ECUADOR</span></td>
+                <td class="colDate hidden-phone"><span class="jobDate">26 sept 2026</span></td>
+                <td class="colDepartment hidden-phone"><span class="jobDepartment">Académicos</span></td>
+              </tr>
+            </tbody></table>
+        """
+
+        records = GenericHTMLCollector(
+            collector_config=collector,
+            fetcher=lambda url: page,
+        ).collect()
+
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0].title, "Docente de Física")
+        self.assertEqual(
+            records[0].source_url,
+            "https://empleos.udla.edu.ec/job/QUITO-DOCENTE/123/",
+        )
+        self.assertIn("Académicos", records[0].description)

@@ -4,6 +4,7 @@ from django.core.exceptions import ImproperlyConfigured, ValidationError
 from django.core.management.base import BaseCommand, CommandError
 from django.utils import timezone
 
+from collectors.console import collector_console_logging
 from collectors.models import Collector, CollectorExecution
 from collectors.registry import registry
 from collectors.retry import error_reason
@@ -22,8 +23,17 @@ class Command(BaseCommand):
             nargs="*",
             help="Optional collector names. Runs all registered collectors when omitted.",
         )
+        parser.add_argument(
+            "--verbose",
+            action="store_true",
+            help="Show retry diagnostics and full collector tracebacks.",
+        )
 
     def handle(self, *args, **options):
+        with collector_console_logging(verbose=options["verbose"]):
+            return self._handle(*args, **options)
+
+    def _handle(self, *args, **options):
         requested_names = options["collector_names"]
         selected = registry.enabled_definitions(requested_names)
 
@@ -93,9 +103,13 @@ class Command(BaseCommand):
                 collector_definition.last_duration,
                 len(result.errors),
             )
+            error = ""
+            if result.errors:
+                short_error = " ".join(result.errors[0].split())
+                error = f" error={short_error[:160]}"
             self.stdout.write(
                 f"{collector_definition.name}: new={result.new} updated={result.updated} "
-                f"skipped={result.skipped} errors={len(result.errors)}"
+                f"skipped={result.skipped} errors={len(result.errors)}{error}"
             )
 
     def _error_result(self, message):
