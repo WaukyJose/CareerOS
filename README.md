@@ -179,6 +179,22 @@ VS012 configures USFQ, PUCE, ESPOL, EPN, and UTPL with `GenericHTMLCollector`; n
 
 The first-university collectors use a 30-day posting preference, discard listings with parsed deadlines before the current date, and exclude closed, finalized, archived, or historical page content. A source with no current vacancies succeeds with zero jobs instead of importing old announcements or attachments. Validation results are recorded in `docs/VS012_VALIDATION.md`.
 
+### Ecuador Academic Source Expansion
+
+VS019 adds UDLA's official employment search using `GenericHTMLCollector` and the reusable `SAP SuccessFactors job results` selector template. The collector retains the 30-day posting limit and closed/expired-content exclusions. Priority institutions without a reliable official institutional-employment listing were deliberately not configured. Verification results and skip reasons are recorded in `docs/VS019_VALIDATION.md`.
+
+VS021 adds UNACH, Ikiam, and UArtes as official-source `GenericHTMLCollector` configurations. The collectors use direct database selectors and institution-specific include/exclude filters rather than new Python classes. UNACH currently extracts HTML detail links; Ikiam and UArtes are configured but may report empty when their official pages expose only attachment or download URLs blocked by the shared extraction safety filters. Validation is recorded in `docs/VS021_VALIDATION.md`.
+
+### Refresh the job pipeline
+
+VS020 runs every enabled collector and then recomputes matches with one command. Individual collector failures are included in the summary and do not prevent the remaining collectors or matching from running.
+
+```bash
+python manage.py refresh_jobs
+```
+
+The default output is one concise line per collector followed by aggregate collector and match totals. Use `python manage.py refresh_jobs --verbose` to include retry diagnostics and full collector tracebacks.
+
 ### Extraction Quality
 
 VS010 adds shared extraction filtering for collectors. The framework ignores document files, spreadsheets, presentations, archives, images, viewer/download URLs, and links inside navigation, menu, header, or footer regions. `Collector.include_patterns` and `Collector.exclude_patterns` accept one regular expression per line. `allowed_extensions` and `blocked_extensions` accept comma- or whitespace-separated extensions; the built-in unsafe attachment and image blocklist always applies.

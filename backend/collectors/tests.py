@@ -925,3 +925,118 @@ class VS019UDLAConfigurationTests(TestCase):
             "https://empleos.udla.edu.ec/job/QUITO-DOCENTE/123/",
         )
         self.assertIn("Académicos", records[0].description)
+
+
+class VS021AcademicSourcesConfigurationTests(TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        universities = [
+            (
+                "Universidad Nacional de Chimborazo",
+                "Riobamba",
+                "Chimborazo",
+                "https://www.unach.edu.ec",
+            ),
+            (
+                "Universidad Regional Amazonica Ikiam",
+                "Tena",
+                "Napo",
+                "https://www.ikiam.edu.ec",
+            ),
+            (
+                "Universidad de las Artes",
+                "Guayaquil",
+                "Guayas",
+                "https://www.uartes.edu.ec",
+            ),
+        ]
+        for name, city, province, website in universities:
+            University.objects.create(
+                name=name,
+                city=city,
+                province=province,
+                type=University.UniversityType.PUBLIC,
+                website=website,
+            )
+        migration = importlib.import_module(
+            "collectors.migrations.0011_seed_vs021_academic_sources"
+        )
+        from django.apps import apps
+
+        migration.configure_vs021_academic_sources(apps, None)
+
+    def test_vs021_configures_requested_generic_collectors_without_new_templates(self):
+        expected = {"unach", "ikiam", "uartes"}
+        collectors = Collector.objects.filter(name__in=expected).select_related("university", "template")
+
+        self.assertEqual({collector.name for collector in collectors}, expected)
+        for collector in collectors:
+            self.assertEqual(
+                collector.module_path,
+                "collectors.generic_html.GenericHTMLCollector",
+            )
+            self.assertTrue(collector.university.jobs_url)
+            self.assertIsNone(collector.template)
+            self.assertEqual(collector.max_age_days, 30)
+            collector.full_clean()
+
+    def test_unach_selectors_keep_academic_hiring_news(self):
+        collector = Collector.objects.get(name="unach")
+        page = """
+            <article>
+              CONVOCATORIA PROCESO DE SELECCIÓN DE PERSONAL
+              DE APOYO ACADÉMICO–SERVICIOS PROFESIONALES 2026-2S
+              <a href="/convocatoria-proceso-de-seleccion-de-personal-de-apoyo-academico-servicios-profesionales-2026-2s/">Ver detalles</a>
+            </article>
+            <article>
+              I POSTULACIÓN DE LA II CONVOCATORIA A BECAS Y AYUDAS ECONÓMICAS
+              PARA MOVILIDAD DOCENTE INTERNACIONAL 2026
+              <a href="/movilidad-docente/">Ver detalles</a>
+            </article>
+        """
+
+        records = GenericHTMLCollector(
+            collector_config=collector,
+            fetcher=lambda url: page,
+        ).collect()
+
+        self.assertEqual(len(records), 1)
+        self.assertIn("APOYO ACADÉMICO", records[0].title)
+        self.assertEqual(
+            records[0].source_url,
+            "https://www.unach.edu.ec/convocatoria-proceso-de-seleccion-de-personal-de-apoyo-academico-servicios-profesionales-2026-2s/",
+        )
+
+    def test_ikiam_pdf_listing_is_rejected_by_shared_attachment_filter(self):
+        collector = Collector.objects.get(name="ikiam")
+        page = """
+            <ul>
+              <li><a href="/wp-content/uploads/2026/02/publicacion.pdf">PERSONAL ACADÉMICO OCASIONAL 1- GRADO 1</a></li>
+              <li><a href="/wp-content/uploads/2026/02/publicacion.pdf">PERSONAL DE APOYO ACADÉMICO - TÉCNICO DOCENTE-Grado 1</a></li>
+            </ul>
+        """
+
+        records = GenericHTMLCollector(
+            collector_config=collector,
+            fetcher=lambda url: page,
+        ).collect()
+
+        self.assertEqual(records, [])
+
+    def test_uartes_download_listing_is_rejected_by_shared_download_filter(self):
+        collector = Collector.objects.get(name="uartes")
+        page = """
+            <div class="media">
+              <div class="media-body">
+                Convocatoria de personal - Docente Ocasional con Maestría - 2026A-EAV-003
+                <a class="wpdm-download-link" data-downloadurl="https://www.uartes.edu.ec/sitio/en/download/convocatoria-docente-2026a-eav-003/?wpdmdl=1" href="#">Download</a>
+              </div>
+            </div>
+        """
+
+        records = GenericHTMLCollector(
+            collector_config=collector,
+            fetcher=lambda url: page,
+        ).collect()
+
+        self.assertEqual(records, [])
